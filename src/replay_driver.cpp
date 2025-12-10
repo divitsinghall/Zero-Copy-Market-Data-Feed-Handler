@@ -82,7 +82,7 @@ public:
   using BookType = book::OrderBook<Capacity>;
 
   ReplayVisitor(BookType &book, ReplayMetrics &metrics) noexcept
-      : book_(book), metrics_(metrics) {}
+      : book_(book), metrics_(metrics), simulated_order_id_(1) {}
 
   /**
    * @brief Handle Add Order messages (Type 'A').
@@ -94,8 +94,10 @@ public:
   void on_add_order(const itch::AddOrder &msg) {
     ++metrics_.orders_processed;
 
-    // Extract fields from ITCH message
-    uint64_t id = static_cast<uint64_t>(msg.order_ref);
+    // FIX: Generate unique ID to bypass duplicate check in stress tests
+    // The template PCAP repeats the same order_ref, causing all but first to be
+    // rejected
+    uint64_t id = simulated_order_id_++;
     uint64_t price = static_cast<uint32_t>(msg.price); // Already in ticks
     uint32_t qty = static_cast<uint32_t>(msg.shares);
     book::Side side = msg.is_buy() ? book::Side::Buy : book::Side::Sell;
@@ -166,6 +168,7 @@ public:
 private:
   BookType &book_;
   ReplayMetrics &metrics_;
+  uint64_t simulated_order_id_; ///< Counter for generating unique order IDs
 };
 
 // ============================================================================

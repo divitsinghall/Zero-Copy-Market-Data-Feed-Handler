@@ -34,3 +34,7 @@ Testing/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Generated stress test files (too large for GitHub)
+data/StressTest.pcap
+data/*.dbn.zst
