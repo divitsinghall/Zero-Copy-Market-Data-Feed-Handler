@@ -156,9 +156,12 @@ public:
         reinterpret_cast<const PcapGlobalHeader *>(data_);
 
     // Check magic number
-    if (global_header->magic_number == 0xa1b2c3d4) {
+    // Standard PCAP (microsecond): 0xa1b2c3d4 (native) or 0xd4c3b2a1 (swapped)
+    // Nanosecond PCAP:             0xa1b23c4d (native) or 0x4d3cb2a1 (swapped)
+    const uint32_t magic = global_header->magic_number;
+    if (magic == 0xa1b2c3d4 || magic == 0xa1b23c4d) {
       needs_swap_ = false; // Native byte order
-    } else if (global_header->magic_number == 0xd4c3b2a1) {
+    } else if (magic == 0xd4c3b2a1 || magic == 0x4d3cb2a1) {
       needs_swap_ = true; // Need to swap bytes
     } else {
       close(); // Invalid PCAP file

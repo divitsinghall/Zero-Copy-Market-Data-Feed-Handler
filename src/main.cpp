@@ -115,12 +115,113 @@ int main(int argc, char *argv[]) {
 
   auto start_time = std::chrono::high_resolution_clock::now();
 
+  // ============================================================================
+  // Network Header Offset Heuristics
+  // ============================================================================
+  //
+  // Standard network headers before ITCH payload:
+  //   - Ethernet: 14 bytes
+  //   - IP:       20 bytes
+  //   - UDP:      8 bytes
+  //   - Total:    42 bytes
+  //
+  // Some captures may have VLAN tags (+4 bytes) or other variations.
+  // We use a heuristic: search for valid ITCH message type in first 64 bytes.
+  // ============================================================================
+
+  // Valid ITCH message types
+  auto is_valid_itch_type = [](char c) {
+    // Order messages
+    if (c == 'A' || c == 'F' || c == 'E' || c == 'C' || c == 'X' || c == 'D' ||
+        c == 'U')
+      return true;
+    // Trade messages
+    if (c == 'P' || c == 'Q' || c == 'B')
+      return true;
+    // System/stock messages
+    if (c == 'S' || c == 'R' || c == 'H' || c == 'Y' || c == 'L')
+      return true;
+    // Net order imbalance
+    if (c == 'I' || c == 'N')
+      return true;
+    // MWCB and IPO
+    if (c == 'V' || c == 'W' || c == 'K')
+      return true;
+    return false;
+  };
+
+  // Find ITCH payload offset within a packet
+  auto find_itch_offset = [&is_valid_itch_type](const char *data,
+                                                size_t len) -> size_t {
+    // Common header configurations:
+    // 1. Standard: Ethernet(14) + IP(20) + UDP(8) = 42 bytes
+    // 2. With VLAN: Ethernet(14) + VLAN(4) + IP(20) + UDP(8) = 46 bytes
+    // 3. MoldUDP64: ... + Session(10) + Seq(8) + Count(2) = +20 bytes
+    // 4. Message length prefix: +2 bytes before each ITCH message
+    //
+    // Common offsets to try (in order):
+    constexpr size_t OFFSETS[] = {
+        42, // Standard UDP
+        46, // With VLAN tag
+        62, // Standard + MoldUDP header
+        64, // Standard + MoldUDP + length prefix
+        66, // VLAN + MoldUDP header
+        68, // VLAN + MoldUDP + length prefix
+    };
+
+    // Try each known offset
+    for (size_t offset : OFFSETS) {
+      if (offset < len) {
+        char msg_type = data[offset];
+        if (is_valid_itch_type(msg_type)) {
+          // Additional validation: check stock_locate is reasonable
+          if (len >= offset + 3) {
+            uint16_t stock_locate = static_cast<uint16_t>(
+                (static_cast<uint8_t>(data[offset + 1]) << 8) |
+                static_cast<uint8_t>(data[offset + 2]));
+            if (stock_locate > 0 && stock_locate < 10000) {
+              return offset;
+            }
+          }
+          // Even without stock_locate validation, valid message type is good
+          return offset;
+        }
+      }
+    }
+
+    // Fallback: Search first 100 bytes for valid ITCH message type
+    constexpr size_t SEARCH_LIMIT = 100;
+    size_t search_end = (len < SEARCH_LIMIT) ? len : SEARCH_LIMIT;
+
+    for (size_t offset = 0; offset < search_end; ++offset) {
+      char msg_type = data[offset];
+      if (is_valid_itch_type(msg_type)) {
+        // Validate with stock_locate
+        if (len >= offset + 3) {
+          uint16_t stock_locate = static_cast<uint16_t>(
+              (static_cast<uint8_t>(data[offset + 1]) << 8) |
+              static_cast<uint8_t>(data[offset + 2]));
+          if (stock_locate > 0 && stock_locate < 10000) {
+            return offset;
+          }
+        }
+      }
+    }
+
+    // Last resort: return 42 and let parser handle it
+    return 42;
+  };
+
   size_t packet_count =
       reader.for_each_packet([&](const char *data, size_t len) {
-        // Note: PCAP packet may contain Ethernet/IP/UDP headers
-        // For raw ITCH data, we'd need to skip those headers
-        // For now, we try to parse the payload directly
-        (void)parser.parse_buffer(data, len, stats);
+        // Find ITCH payload offset (skip network headers)
+        size_t offset = find_itch_offset(data, len);
+
+        if (offset < len) {
+          const char *itch_data = data + offset;
+          size_t itch_len = len - offset;
+          (void)parser.parse_buffer(itch_data, itch_len, stats);
+        }
       });
 
   auto end_time = std::chrono::high_resolution_clock::now();
