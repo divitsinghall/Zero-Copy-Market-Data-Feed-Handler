@@ -83,6 +83,7 @@ target_link_libraries(itch_driver
 # ============================================================================
 add_executable(itch_benchmark
     benchmarks/hello_benchmark.cpp
+    benchmarks/itch_bench.cpp
 )
 target_link_libraries(itch_benchmark 
     PRIVATE 
