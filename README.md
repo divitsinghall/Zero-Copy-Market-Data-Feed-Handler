@@ -2,20 +2,64 @@
 
 A high-performance, low-latency market data feed handler for parsing NASDAQ TotalView-ITCH 5.0 protocol messages. Designed for High-Frequency Trading (HFT) environments where every nanosecond counts.
 
+## 🚀 Highlights
+
+| Component | Performance |
+|-----------|-------------|
+| **ITCH Parser** | 0.60ns latency, 1.66B msg/sec |
+| **Matching Engine** | 44.9ns avg order latency |
+| **End-to-End Replay** | 290K orders/sec @ 452 MB/sec |
+| **Memory Pool** | 10M orders, zero allocation on hot path |
+
 ## Features
 
 - **Zero-Copy Parsing**: Direct `reinterpret_cast` from buffers to structs, no `memcpy` on hot path.
-- **Micro-Optimized**: Uses C++20 `[[likely]]`/`[[unlikely]]` branch prediction hints to achieve sub-nanosecond latency.
+- **Lock-Free Memory Pool**: Pre-allocated 10M order slots with O(1) alloc/dealloc.
+- **Matching Engine**: Price-time priority order book with intrusive data structures.
+- **Micro-Optimized**: Uses C++20 `[[likely]]`/`[[unlikely]]` branch prediction hints.
 - **Big Endian Handling**: Compile-time optimized byte swapping using `__builtin_bswap` intrinsics.
 - **Python Bindings**: Exposes raw PCAP data to NumPy/Pandas via `pybind11` for quantitative research.
-- **Benchmarked**: Google Benchmark integration validates **0.60ns** parsing latency.
+- **Stress Tested**: Validated with 500MB synthetic market data (320K+ orders).
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        CHRONOS Market Replay Engine                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐  │
+│   │  PCAP Reader │───▶│ ITCH Parser  │───▶│      Order Book          │  │
+│   │  (mmap I/O)  │    │ (Zero-Copy)  │    │  (Price-Time Priority)   │  │
+│   └──────────────┘    └──────────────┘    └──────────────────────────┘  │
+│          │                   │                        │                  │
+│          ▼                   ▼                        ▼                  │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐  │
+│   │ Zero-Copy    │    │  Visitor     │    │     Memory Pool          │  │
+│   │ Buffer View  │    │  Pattern     │    │  (10M Pre-allocated)     │  │
+│   └──────────────┘    └──────────────┘    └──────────────────────────┘  │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Structure
 
 ```text
-├── include/itch/      # Header-only parser library
-│   └── compat.hpp     # Endianness utilities
-├── src/               # C++ Driver & Python Bindings
+├── include/
+│   ├── itch/          # Header-only ITCH parser library
+│   │   ├── parser.hpp       # Zero-copy message dispatcher
+│   │   ├── messages.hpp     # Packed ITCH message structs
+│   │   └── pcap_reader.hpp  # Memory-mapped PCAP file reader
+│   └── book/          # Order book & matching engine
+│       ├── order_book.hpp   # Price-time priority matching
+│       ├── memory_pool.hpp  # Lock-free object pool
+│       └── intrusive_list.hpp
+├── src/
+│   ├── main.cpp             # ITCH parser CLI driver
+│   ├── replay_driver.cpp    # Chronos market replay engine
+│   └── python_bindings.cpp  # pybind11 NumPy integration
+├── scripts/
+│   └── generate_stress.py   # 500MB stress test generator
 ├── python/            # Python demo scripts
 ├── data/              # PCAP sample files
 ├── tests/             # GTest unit tests
@@ -43,8 +87,89 @@ cmake --build build -j$(nproc)
 cd build && ctest --output-on-failure
 
 # Run benchmarks
-./itch_benchmark 
+./build/itch_benchmark 
 ```
+
+## Chronos Market Replay Engine
+
+The `chronos_replay` binary integrates the ITCH parser with a full order book matching engine, simulating a complete HFT data pipeline.
+
+### Running the Replay
+
+```bash
+# Basic usage with sample data
+./build/chronos_replay data/Multiple.Packets.pcap
+
+# With a custom PCAP file
+./build/chronos_replay /path/to/your/data.pcap
+```
+
+### Sample Output
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║           CHRONOS - Market Replay Engine                     ║
+║   Zero-Copy ITCH Parser + High-Frequency Matching Engine     ║
+╚══════════════════════════════════════════════════════════════╝
+
+Initializing Memory Pool (Capacity: 10000000 orders)...
+  Pool Memory: 352.86 MB
+Initializing OrderBook...
+Opening PCAP file: data/StressTest.pcap
+  File size: 500.00 MB
+
+Starting market replay...
+  Match trigger interval: every 100th order
+
+=== Performance ===
+Packets processed: 640548
+Total time: 1105.813 ms
+Throughput: 0.58 million packets/sec
+Order Rate: 0.29 million orders/sec
+Bandwidth: 452.16 MB/sec
+
+=== Market Replay Metrics ===
+Orders Processed:           320274
+Orders Added to Book:       320274
+Orders Cancelled:                0
+Matches Executed:             3202
+Avg add_order latency: 44.9 ns
+
+=== Final Book State ===
+Orders Resting: 313870
+Bid Levels: 1
+Ask Levels: 0
+Best Bid: 80.5200
+
+Pool Utilization: 3.14% (313870 / 10000000)
+```
+
+## Stress Testing
+
+Generate a large synthetic PCAP file to stress test the engine:
+
+```bash
+# Generate 500MB stress test file (multiplies template packets)
+python3 scripts/generate_stress.py
+
+# Run the stress test
+./build/chronos_replay data/StressTest.pcap
+```
+
+### Stress Test Results (500MB, 320K Orders)
+
+| Metric | Result |
+|--------|--------|
+| **File Size** | 500 MB |
+| **Packets Processed** | 640,548 |
+| **Orders Processed** | 320,274 |
+| **Total Time** | 1.1 seconds |
+| **Throughput** | 580K packets/sec |
+| **Order Rate** | 290K orders/sec |
+| **Bandwidth** | 452 MB/sec |
+| **Avg Order Latency** | **44.9 nanoseconds** |
+| **Matches Executed** | 3,202 |
+| **Pool Utilization** | 3.14% (313K / 10M) |
 
 ## Python Bindings for Quantitative Research
 
@@ -78,7 +203,7 @@ File size: 1,661 bytes
 
 ## Performance Analysis
 
-### Benchmark Results
+### Parser Benchmark Results
 
 | Implementation | Latency (p99) | Throughput | vs Baseline |
 |----------------|---------------|------------|-------------|
