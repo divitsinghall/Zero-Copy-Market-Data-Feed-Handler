@@ -143,9 +143,11 @@ public:
 
     // Dispatch based on message type
     // Using switch-case compiles to efficient jump table
+    // Branch hints: AddOrder is most common (~70% of messages), SystemEvent is
+    // rare
     switch (msg_type) {
-    case msg_type::AddOrder: {
-      if (length < sizeof(AddOrder)) {
+    [[likely]] case msg_type::AddOrder: {
+      if (length < sizeof(AddOrder)) [[unlikely]] {
         return ParseResult::BufferTooSmall;
       }
       const auto *msg = reinterpret_cast<const AddOrder *>(buffer);
@@ -154,7 +156,7 @@ public:
     }
 
     case msg_type::OrderExecuted: {
-      if (length < sizeof(OrderExecuted)) {
+      if (length < sizeof(OrderExecuted)) [[unlikely]] {
         return ParseResult::BufferTooSmall;
       }
       const auto *msg = reinterpret_cast<const OrderExecuted *>(buffer);
@@ -162,8 +164,8 @@ public:
       return ParseResult::Ok;
     }
 
-    case msg_type::SystemEvent: {
-      if (length < sizeof(MessageHeader)) {
+    [[unlikely]] case msg_type::SystemEvent: {
+      if (length < sizeof(MessageHeader)) [[unlikely]] {
         return ParseResult::BufferTooSmall;
       }
       const auto *msg = reinterpret_cast<const MessageHeader *>(buffer);
