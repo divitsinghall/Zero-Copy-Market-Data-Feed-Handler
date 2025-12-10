@@ -69,6 +69,16 @@ add_library(itch_parser INTERFACE)
 target_include_directories(itch_parser INTERFACE ${CMAKE_SOURCE_DIR}/include)
 
 # ============================================================================
+# Main Executable (PCAP Driver)
+# ============================================================================
+add_executable(itch_driver
+    src/main.cpp
+)
+target_link_libraries(itch_driver
+    PRIVATE
+        itch_parser
+)
+# ============================================================================
 # Benchmarks
 # ============================================================================
 add_executable(itch_benchmark
